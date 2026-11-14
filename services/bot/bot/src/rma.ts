@@ -118,6 +118,13 @@ export function tuneBoardPage(page: string): string {
     );
 }
 
+// iPhone Safari does not shrink the page when the keyboard opens, so a full-height app hides its
+// message box behind the keyboard. Pin the body to the part of the screen the keyboard leaves visible.
+export const KEYBOARD_FIT =
+  "(function(){var v=window.visualViewport,r=document.documentElement;if(!v)return;function fit(){var b=document.body,kb=v.scale<1.05&&r.clientHeight-v.height>120;" +
+  "r.classList.toggle('kbopen',kb);b.style.position=kb?'fixed':'';b.style.top=kb?v.offsetTop+'px':'';b.style.left=kb?'0':'';b.style.right=kb?'0':'';b.style.height=kb?v.height+'px':''}" +
+  "v.addEventListener('resize',fit);v.addEventListener('scroll',fit);fit()})();";
+
 // A slim Flisk header on top of the board page: where the bot is, and links to the jobs board and the source.
 // Added when the page is served, so `scripts/sync-rma.ts` can overwrite rma.generated.ts without losing it.
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -128,6 +135,10 @@ export function withHeader(page: string, jobsUrl: string): string {
     '<style>body{display:flex;flex-direction:column;padding:0!important}.app{flex:1;min-height:0;height:auto!important;margin:var(--p1)}flisk-bar,#flhead{flex:none}#flhead{height:38px;display:flex;align-items:center;gap:20px;padding:0 16px;background:#06060a;border-bottom:1px solid #1d1d28;font:500 12px/1 var(--body,system-ui,sans-serif)}' +
     '#flhead a{color:#9a9aab;text-decoration:none;letter-spacing:.06em;text-transform:uppercase;font-size:11px}#flhead a:hover{color:#fff}' +
     '#flhead .brand{color:#fff;font-weight:800;font-size:15px;letter-spacing:0;text-transform:none}#flhead .brand span{color:#2dd4bf}#flhead a[aria-current]{color:#fff;border-bottom:2px solid #2dd4bf;padding:4px 0}#flhead .sp{flex:1}#flhead a.post{background:#2dd4bf;color:#06060a;padding:7px 12px;font-weight:700}#flhead a.post:hover{background:#fff}' +
+    // iPhone Safari zooms the whole page when a field under 16px gets focus (the message box is 14px).
+    '@media (pointer:coarse){input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),textarea,select{font-size:16px!important}}' +
+    // While the keyboard is open on a phone, give the screen to the messages and the message box.
+    '@media (max-width:720px){html.kbopen flisk-bar,html.kbopen #flhead,html.kbopen .side{display:none!important}html.kbopen .app{margin:0}}' +
     // One line per link; on a phone the row scrolls inside itself instead of pushing the page sideways.
     '#flhead a{white-space:nowrap;flex:none}@media(max-width:640px){#flhead{gap:14px;overflow-x:auto;scrollbar-width:none}#flhead::-webkit-scrollbar{display:none}}'+
     // The plain design paints every background white: give the header its own light colours there.
@@ -136,5 +147,5 @@ export function withHeader(page: string, jobsUrl: string): string {
     '<header id="flhead"><a class="brand" href="/">flisk <span>bot</span></a><a href="/" aria-current="page">Chat</a>' +
     `<a href="${j}/">Jobs</a><a href="${j}/agents">Agents</a><a href="${j}/how">For agents</a><span class="sp"></span><a class="post" href="${j}/post">Post a job</a>` +
     '<a href="https://github.com/flisk-sh/flisk-bot">Source</a></header>';
-  return tuned.replace('</head>', css + '<script src="https://flisk.si/assets/bar.js" defer></script></head>').replace('<body>', '<body>' + bar);
+  return tuned.replace('</head>', css + '<script src="https://flisk.si/assets/bar.js" defer></script></head>').replace('<body>', '<body>' + bar).replace('</body>', `<script>${KEYBOARD_FIT}</script></body>`);
 }
