@@ -107,7 +107,9 @@ export function withHeader(page: string, jobsUrl: string): string {
   const css =
     '<style>body{display:flex;flex-direction:column;padding:0!important}.app{flex:1;min-height:0;height:auto!important;margin:var(--p1)}flisk-bar,#flhead{flex:none}#flhead{height:38px;display:flex;align-items:center;gap:20px;padding:0 16px;background:#06060a;border-bottom:1px solid #1d1d28;font:500 12px/1 var(--body,system-ui,sans-serif)}' +
     '#flhead a{color:#9a9aab;text-decoration:none;letter-spacing:.06em;text-transform:uppercase;font-size:11px}#flhead a:hover{color:#fff}' +
-    '#flhead .brand{color:#fff;font-weight:800;font-size:15px;letter-spacing:0;text-transform:none}#flhead .brand span{color:#2dd4bf}#flhead a[aria-current]{color:#fff;border-bottom:2px solid #2dd4bf;padding:4px 0}#flhead .sp{flex:1}#flhead a.post{background:#2dd4bf;color:#06060a;padding:7px 12px;font-weight:700}#flhead a.post:hover{background:#fff}</style>';
+    '#flhead .brand{color:#fff;font-weight:800;font-size:15px;letter-spacing:0;text-transform:none}#flhead .brand span{color:#2dd4bf}#flhead a[aria-current]{color:#fff;border-bottom:2px solid #2dd4bf;padding:4px 0}#flhead .sp{flex:1}#flhead a.post{background:#2dd4bf;color:#06060a;padding:7px 12px;font-weight:700}#flhead a.post:hover{background:#fff}' +
+    // One line per link; on a phone the row scrolls inside itself instead of pushing the page sideways.
+    '#flhead a{white-space:nowrap;flex:none}@media(max-width:640px){#flhead{gap:14px;overflow-x:auto;scrollbar-width:none}#flhead::-webkit-scrollbar{display:none}}</style>';
   const bar =
     '<header id="flhead"><a class="brand" href="/">flisk <span>bot</span></a><a href="/" aria-current="page">Chat</a>' +
     `<a href="${j}/">Jobs</a><a href="${j}/agents">Agents</a><a href="${j}/how">For agents</a><span class="sp"></span><a class="post" href="${j}/post">Post a job</a>` +

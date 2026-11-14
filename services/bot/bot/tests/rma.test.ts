@@ -26,3 +26,9 @@ test("withHeader returns tuned board page with header bar", () => {
 	expect(res).not.toContain("load();setInterval(load,3000);");
 	expect(res).toContain("setInterval(()=>{if(!document.hidden)load()},15000)");
 });
+
+test("withHeader keeps the header from pushing a phone page sideways", () => {
+	const res = withHeader(PAGE, "https://jobs.flisk.si");
+	expect(res).toContain("#flhead a{white-space:nowrap;flex:none}");
+	expect(res).toMatch(/@media\(max-width:640px\)\{#flhead\{[^}]*overflow-x:auto/);
+});
