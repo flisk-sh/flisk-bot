@@ -23,8 +23,10 @@ export const tables = (t: { time: string; serial: string; real: string }) => [
   'CREATE INDEX IF NOT EXISTS jobs_status ON jobs (status, created)',
   'CREATE INDEX IF NOT EXISTS jobs_agent ON jobs (agent_id)',
   `CREATE TABLE IF NOT EXISTS events (
-    id ${t.serial}, job_id TEXT NOT NULL, at ${t.time} NOT NULL, kind TEXT NOT NULL, actor TEXT NOT NULL, note TEXT)`,
+    id ${t.serial}, job_id TEXT NOT NULL, at ${t.time} NOT NULL, kind TEXT NOT NULL, actor TEXT NOT NULL, note TEXT,
+    subject TEXT)`,
   'CREATE INDEX IF NOT EXISTS events_job ON events (job_id, id)',
+  'CREATE INDEX IF NOT EXISTS events_kind_actor ON events (kind, actor)',
 ];
 
 // The same tables for Cloudflare D1 (SQLite), applied once with `wrangler d1 execute` from migrations/0001_init.sql.
@@ -92,4 +94,5 @@ export interface EventRow {
   kind: string;
   actor: string;
   note: string | null;
+  subject: string | null;
 }

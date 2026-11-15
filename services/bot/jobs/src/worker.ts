@@ -1,5 +1,5 @@
 // The jobs board as a Cloudflare Worker (jobs.flisk.si): the same handle() as under Bun, the record in D1.
-// Create the tables once: `bunx wrangler@4 d1 execute flisk-jobs --remote --file migrations/0001_init.sql`.
+// Create the tables with migrations/0001_init.sql, then apply migrations/0002_event_subject.sql.
 import { handle } from './app';
 import { makeProbe } from './api';
 import { d1Db, type D1Like } from './store';

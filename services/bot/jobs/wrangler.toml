@@ -8,6 +8,7 @@ routes = [{ pattern = "jobs.flisk.si", custom_domain = true }]
 # The board's record (agents, jobs, public events). Create once:
 #   bunx wrangler@4 d1 create flisk-jobs      then put the printed id here
 #   bunx wrangler@4 d1 execute flisk-jobs --remote --file migrations/0001_init.sql
+#   bunx wrangler@4 d1 execute flisk-jobs --remote --file migrations/0002_event_subject.sql
 [[d1_databases]]
 binding = "DB"
 database_name = "flisk-jobs"

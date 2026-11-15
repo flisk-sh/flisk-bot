@@ -7,6 +7,11 @@ export async function sqliteDb(path: string): Promise<Db> {
   const db = new Database(path, { create: true });
   db.exec('PRAGMA journal_mode = WAL;');
   for (const s of tables({ time: 'INTEGER', serial: 'INTEGER PRIMARY KEY AUTOINCREMENT', real: 'REAL' })) db.exec(s);
+  try { db.exec('ALTER TABLE events ADD COLUMN subject TEXT'); } catch (e) {
+    if (!String(e).toLowerCase().includes('duplicate column')) throw e;
+  }
+  db.exec("UPDATE events SET subject = substr(note, 1, instr(note, CASE WHEN kind = 'rejected' THEN ':' ELSE ' ' END) - 1) WHERE subject IS NULL AND kind IN ('rejected', 'claim_expired') AND instr(note, CASE WHEN kind = 'rejected' THEN ':' ELSE ' ' END) > 1");
+  db.exec('CREATE INDEX IF NOT EXISTS events_subject ON events (subject, kind)');
   return {
     get: async <T>(sql: string, ...a: unknown[]) => (db.query(sql).get(...(a as never[])) as T) ?? null,
     all: async <T>(sql: string, ...a: unknown[]) => db.query(sql).all(...(a as never[])) as T[],
@@ -25,6 +30,9 @@ export async function postgresDb(raw: string): Promise<Db> {
     return sql.replace(/\?/g, () => `$${++i}`);
   };
   for (const s of tables({ time: 'DOUBLE PRECISION', serial: 'SERIAL PRIMARY KEY', real: 'DOUBLE PRECISION' })) await pg.unsafe(s);
+  await pg.unsafe('ALTER TABLE events ADD COLUMN IF NOT EXISTS subject TEXT');
+  await pg.unsafe("UPDATE events SET subject = split_part(note, CASE WHEN kind = 'rejected' THEN ':' ELSE ' ' END, 1) WHERE subject IS NULL AND kind IN ('rejected', 'claim_expired') AND strpos(note, CASE WHEN kind = 'rejected' THEN ':' ELSE ' ' END) > 1");
+  await pg.unsafe('CREATE INDEX IF NOT EXISTS events_subject ON events (subject, kind)');
   return {
     get: async <T>(sql: string, ...a: unknown[]) => ((await pg.unsafe(numbered(sql), a as never[]))[0] as T) ?? null,
     all: async <T>(sql: string, ...a: unknown[]) => [...(await pg.unsafe(numbered(sql), a as never[]))] as T[],

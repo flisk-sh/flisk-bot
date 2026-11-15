@@ -118,8 +118,8 @@ export async function agentByKey(ctx: Ctx, auth: string | null): Promise<AgentRo
   return row;
 }
 
-async function event(ctx: Ctx, jobId: string, kind: string, actor: string, note: string | null = null) {
-  (await ctx.db.run('INSERT INTO events (job_id, at, kind, actor, note) VALUES (?, ?, ?, ?, ?)', jobId, ctx.now(), kind, actor, note));
+async function event(ctx: Ctx, jobId: string, kind: string, actor: string, note: string | null = null, subject: string | null = null) {
+  (await ctx.db.run('INSERT INTO events (job_id, at, kind, actor, note, subject) VALUES (?, ?, ?, ?, ?, ?)', jobId, ctx.now(), kind, actor, note, subject));
 }
 
 /** Claims older than CLAIM_HOURS go back to open, with an event. Run before every read and claim. */
@@ -128,7 +128,7 @@ export async function expireClaims(ctx: Ctx) {
   const stale = (await ctx.db.all("SELECT id, agent_id FROM jobs WHERE status = 'claimed' AND claimed_at < ?", cutoff)) as { id: string; agent_id: string }[];
   for (const j of stale) {
     (await ctx.db.run("UPDATE jobs SET status = 'open', agent_id = NULL, claimed_at = NULL WHERE id = ? AND status = 'claimed'", j.id));
-    await event(ctx, j.id, 'claim_expired', 'board', `${j.agent_id} did not submit within ${CLAIM_HOURS} hours`);
+    await event(ctx, j.id, 'claim_expired', 'board', `${j.agent_id} did not submit within ${CLAIM_HOURS} hours`, j.agent_id);
   }
 }
 
@@ -287,7 +287,7 @@ export async function decide(ctx: Ctx, me: AgentRow, id: string, verdict: 'accep
     await event(ctx, id, 'accepted', me.id, note);
   } else {
     (await ctx.db.run("UPDATE jobs SET status = 'open', agent_id = NULL, claimed_at = NULL, submitted_at = NULL, result_url = NULL, result_note = NULL WHERE id = ?", id));
-    await event(ctx, id, 'rejected', me.id, `${j.agent_id}: ${note}`);
+    await event(ctx, id, 'rejected', me.id, `${j.agent_id}: ${note}`, j.agent_id);
   }
   return jobDetail(ctx, id);
 }
@@ -301,22 +301,51 @@ export async function cancelJob(ctx: Ctx, me: AgentRow, id: string) {
   return jobDetail(ctx, id);
 }
 
+type AgentRecord = { posted: number; claimed: number; submitted: number; accepted: number; rejected: number; expired: number };
+
+const emptyAgentRecord = (): AgentRecord => ({ posted: 0, claimed: 0, submitted: 0, accepted: 0, rejected: 0, expired: 0 });
+
+/** Counts all agent activity with two grouped queries, independent of the number of agents. */
+async function agentRecords(ctx: Ctx): Promise<Map<string, AgentRecord>> {
+  const records = new Map<string, AgentRecord>();
+  const events = await ctx.db.all<{ agent_id: string | null; kind: string; n: unknown }>(
+    "SELECT CASE WHEN kind IN ('rejected', 'claim_expired') THEN subject ELSE actor END AS agent_id, kind, COUNT(*) AS n "
+      + "FROM events WHERE kind IN ('posted', 'claimed', 'submitted', 'rejected', 'claim_expired') "
+      + 'GROUP BY agent_id, kind',
+  );
+  for (const row of events) {
+    if (!row.agent_id) continue;
+    const record = records.get(row.agent_id) ?? emptyAgentRecord();
+    const key = row.kind === 'claim_expired' ? 'expired' : row.kind;
+    if (key in record) record[key as keyof AgentRecord] = Number(row.n);
+    records.set(row.agent_id, record);
+  }
+  const accepted = await ctx.db.all<{ agent_id: string | null; n: unknown }>(
+    "SELECT agent_id, COUNT(*) AS n FROM jobs WHERE status = 'accepted' AND agent_id IS NOT NULL GROUP BY agent_id",
+  );
+  for (const row of accepted) {
+    if (!row.agent_id) continue;
+    const record = records.get(row.agent_id) ?? emptyAgentRecord();
+    record.accepted = Number(row.n);
+    records.set(row.agent_id, record);
+  }
+  return records;
+}
+
 /** An agent's public record: plain counts from the event log, no score. */
 export async function agentRecord(ctx: Ctx, id: string) {
   const a = (await ctx.db.get('SELECT id, name, homepage, about, created FROM agents WHERE id = ?', id)) as AgentRow | null;
   if (!a) throw new ApiError(404, 'no such agent');
-  const events = (kind: string) => count(ctx, 'SELECT COUNT(*) AS n FROM events WHERE kind = ? AND actor = ?', kind, id);
-  const done = await count(ctx, "SELECT COUNT(*) AS n FROM jobs WHERE agent_id = ? AND status = 'accepted'", id);
-  const rejected = await count(ctx, "SELECT COUNT(*) AS n FROM events WHERE kind = 'rejected' AND note LIKE ?", `${id}:%`);
-  return {
-    agent: { ...a, created: new Date(a.created).toISOString() },
-    record: { posted: await events('posted'), claimed: await events('claimed'), submitted: await events('submitted'), accepted: done, rejected, expired: await count(ctx, "SELECT COUNT(*) AS n FROM events WHERE kind = 'claim_expired' AND note LIKE ?", `${id} %`) },
-  };
+  const records = await agentRecords(ctx);
+  return { agent: { ...a, created: new Date(a.created).toISOString() }, record: records.get(id) ?? emptyAgentRecord() };
 }
 
 export async function listAgents(ctx: Ctx) {
-  const rows = (await ctx.db.all('SELECT id FROM agents ORDER BY created DESC LIMIT 200')) as { id: string }[];
-  return { agents: await Promise.all(rows.map((r) => agentRecord(ctx, r.id))) };
+  const rows = (await ctx.db.all('SELECT id, name, homepage, about, created FROM agents ORDER BY created DESC LIMIT 200')) as AgentRow[];
+  const records = await agentRecords(ctx);
+  return {
+    agents: rows.map((a) => ({ agent: { ...a, created: new Date(a.created).toISOString() }, record: records.get(a.id) ?? emptyAgentRecord() })),
+  };
 }
 
 export async function stats(ctx: Ctx) {

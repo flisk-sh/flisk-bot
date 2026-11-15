@@ -1,13 +1,17 @@
+import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { makeProbe } from '../src/api';
 import { handle } from '../src/app';
-import { plainPostgresUrl } from '../src/store';
+import { type Db, plainPostgresUrl } from '../src/store';
 import { sqliteDb } from '../src/store-bun';
 
-async function board(probeStatus = 200) {
+async function board(probeStatus = 200, database?: Db) {
   let t = Date.parse('2026-11-13T10:00:00Z');
   const probed: string[] = [];
-  const ctx = { db: await sqliteDb(':memory:'), now: () => t, probe: async (u: string) => (probed.push(u), probeStatus) };
+  const ctx = { db: database ?? await sqliteDb(':memory:'), now: () => t, probe: async (u: string) => (probed.push(u), probeStatus) };
   const call = async (method: string, path: string, body?: unknown, key?: string) => {
     const res = await handle(
       new Request(`http://jobs.test${path}`, { method, headers: { 'content-type': 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) }),
@@ -19,6 +23,83 @@ async function board(probeStatus = 200) {
   const register = async (name: string) => (await call('POST', '/api/agents', { name })).body.key as string;
   return { call, register, probed, advance: (h: number) => (t += h * 3600e3) };
 }
+
+test('upgrading an existing SQLite database preserves historical agent records', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'jobs-migration-'));
+  const path = join(dir, 'jobs.sqlite');
+  try {
+    const old = new Database(path);
+    old.exec('CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL, actor TEXT NOT NULL, note TEXT)');
+    old.exec("INSERT INTO events (job_id, at, kind, actor, note) VALUES ('j', 1, 'rejected', 'poster', 'worker-1234: retry'), ('j', 2, 'claim_expired', 'board', 'worker-1234 did not submit within 24 hours')");
+    old.close();
+    for (let i = 0; i < 2; i++) {
+      const db = await sqliteDb(path);
+      const rows = await db.all<{ subject: string }>('SELECT subject FROM events ORDER BY id');
+      expect(rows.map((r) => r.subject)).toEqual(['worker-1234', 'worker-1234']);
+      await db.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('D1 migration backfills old event subjects', () => {
+  const db = new Database(':memory:');
+  try {
+    db.exec('CREATE TABLE events (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, actor TEXT NOT NULL, note TEXT)');
+    db.exec("INSERT INTO events VALUES (1, 'rejected', 'poster', 'worker-1234: retry'), (2, 'claim_expired', 'board', 'worker-1234 did not submit within 24 hours')");
+    db.exec(readFileSync(join(import.meta.dir, '../migrations/0002_event_subject.sql'), 'utf8'));
+    expect(db.query('SELECT subject FROM events ORDER BY id').all()).toEqual([{ subject: 'worker-1234' }, { subject: 'worker-1234' }]);
+  } finally {
+    db.close();
+  }
+});
+
+test('listing agents uses a fixed query count and matches single-agent records', async () => {
+  const raw = await sqliteDb(':memory:');
+  let queries = 0;
+  const db: Db = {
+    get: async <T>(sql, ...args) => { queries++; return raw.get<T>(sql, ...args); },
+    all: async <T>(sql, ...args) => { queries++; return raw.all<T>(sql, ...args); },
+    run: async (sql, ...args) => { queries++; return raw.run(sql, ...args); },
+    close: raw.close,
+  };
+  const b = await board(200, db);
+  const poster = (await b.call('POST', '/api/agents', { name: 'poster' })).body as { key: string };
+  const workers: { id: string; key: string }[] = [];
+  for (let i = 0; i < 10; i++) {
+    const r = (await b.call('POST', '/api/agents', { name: `worker-${i}` })).body as { key: string; agent: { id: string } };
+    workers.push({ id: r.agent.id, key: r.key });
+  }
+
+  for (let i = 0; i < workers.length; i++) {
+    const posted = await b.call('POST', '/api/jobs', { title: `Job ${i}`, body: 'Do it', doneWhen: 'A result' }, poster.key);
+    const id = (posted.body as { job: { id: string } }).job.id;
+    await b.call('POST', `/api/jobs/${id}/claim`, {}, workers[i].key);
+    if (i % 3 === 2) continue;
+    await b.call('POST', `/api/jobs/${id}/submit`, { resultUrl: `https://example.com/result-${i}` }, workers[i].key);
+    await b.call('POST', `/api/jobs/${id}/${i % 3 === 1 ? 'reject' : 'accept'}`, i % 3 === 1 ? { note: 'try again' } : {}, poster.key);
+  }
+  b.advance(25);
+  await b.call('GET', '/api/jobs');
+
+  queries = 0;
+  const listed = await b.call('GET', '/api/agents');
+  expect(listed.status).toBe(200);
+  expect(queries).toBeLessThanOrEqual(4);
+  const byId = new Map((listed.body as { agents: { agent: { id: string }; record: unknown }[] }).agents.map((a) => [a.agent.id, a.record]));
+  expect(byId.get(workers[0].id)).toMatchObject({ claimed: 1, submitted: 1, accepted: 1, rejected: 0, expired: 0 });
+  expect(byId.get(workers[1].id)).toMatchObject({ claimed: 1, submitted: 1, accepted: 0, rejected: 1, expired: 0 });
+  expect(byId.get(workers[2].id)).toMatchObject({ claimed: 1, submitted: 0, accepted: 0, rejected: 0, expired: 1 });
+
+  const single = await b.call('GET', `/api/agents/${workers[1].id}`);
+  expect(single.body).toMatchObject({ agent: { id: workers[1].id }, record: byId.get(workers[1].id) });
+  for (let i = 0; i < 189; i++) await b.register(`extra-${i}`);
+  queries = 0;
+  const full = await b.call('GET', '/api/agents');
+  expect(full.body.agents).toHaveLength(200);
+  expect(queries).toBeLessThanOrEqual(4);
+});
 
 test('any agent registers with one call and gets a key shown once', async () => {
   const b = await board();

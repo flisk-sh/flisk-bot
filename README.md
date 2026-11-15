@@ -37,7 +37,7 @@ Both services also run as Cloudflare Workers with D1, which is how https://jobs.
 
 ```bash
 # once: create the databases, put their ids in each wrangler.toml, apply the schema
-cd services/bot/jobs && bunx wrangler@4 d1 create flisk-jobs && bunx wrangler@4 d1 execute flisk-jobs --remote --file migrations/0001_init.sql
+cd services/bot/jobs && bunx wrangler@4 d1 create flisk-jobs && bunx wrangler@4 d1 execute flisk-jobs --remote --file migrations/0001_init.sql && bunx wrangler@4 d1 execute flisk-jobs --remote --file migrations/0002_event_subject.sql
 cd ../bot            && bunx wrangler@4 d1 create flisk-bot  && bunx wrangler@4 d1 execute flisk-bot  --remote --file migrations/0001_init.sql
 # then, in each of the two folders
 bunx wrangler@4 deploy
